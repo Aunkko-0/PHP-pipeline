@@ -1,0 +1,11 @@
+version: '3.8'
+
+services:
+  web:
+    build: .                 # Build จาก Dockerfile ตรงนี้
+    container_name: my-php-app
+    ports:
+      - "8081:80"           # เข้าเว็บผ่าน http://localhost:8080
+    volumes:
+      - ./:/var/www/html/   # Sync ไฟล์โค้ด ถ้าแก้ index.php หน้าเว็บเปลี่ยนทันที
+    restart: always
