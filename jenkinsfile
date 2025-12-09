@@ -1,65 +1,52 @@
 pipeline {
     agent any
 
-    // กำหนดตัวแปร Environment (ถ้ามี)
     environment {
         IMAGE_NAME = "my-php-app"
+        CONTAINER_NAME = "php-container"
+        PORT_MAPPING = "8080:80" // เข้าผ่าน port 8080
     }
 
     stages {
-        // -----------------------------
-        // Stage 1: เตรียม Code
-        // -----------------------------
-        stage('Checkout Code') {
-            steps {
-                echo 'Step 1: Pulling code from Git...'
-                checkout scm
-            }
-        }
-
-        // -----------------------------
-        // Stage 2: สร้าง Image (Build)
-        // -----------------------------
-        stage('Build Image') {
+        stage('Prepare File') {
             steps {
                 script {
-                    echo 'Step 2: Building Docker Image...'
-                    // สั่ง Build อย่างเดียว ยังไม่รัน
-                    // --no-cache เพื่อให้มั่นใจว่าโค้ดใหม่ถูกใส่เข้าไปจริงๆ
-                    sh "docker-compose build --no-cache"
+                    // จำลองสร้างไฟล์ PHP และ Dockerfile (ในการใช้งานจริงควรดึงจาก Git)
+                    sh 'mkdir -p src'
+                    sh 'echo "<?php echo \"Hello PHP via Jenkins\"; ?>" > src/index.php'
+                    
+                    // เขียน Dockerfile สำหรับ PHP
+                    sh """
+                        echo 'FROM php:8.1-apache' > Dockerfile
+                        echo 'COPY src/ /var/www/html/' >> Dockerfile
+                    """
                 }
             }
         }
 
-        // -----------------------------
-        // Stage 3: นำขึ้นใช้งาน (Deploy)
-        // -----------------------------
-        stage('Deploy Container') {
+        stage('Build') {
             steps {
-                script {
-                    echo 'Step 3: Deploying Container...'
-                    
-                    // 1. เคลียร์ Container เก่าออกก่อน (เพื่อความสะอาด)
-                    sh "docker-compose down || true"
-                    
-                    // 2. รัน Container ขึ้นมา (โดยใช้ Image ที่ Build ไว้แล้วจาก Stage ก่อนหน้า)
-                    sh "docker-compose up -d"
-                }
+                // สร้าง Image
+                sh "docker build -t ${IMAGE_NAME}:latest ."
             }
         }
-        
-        // -----------------------------
-        // Stage 4: ตรวจสอบผลลัพธ์ (Smoke Test)
-        // -----------------------------
-        stage('Health Check') {
+
+        stage('Deploy') {
             steps {
                 script {
-                    echo 'Step 4: Checking if service is alive...'
-                    sleep 5
-                    // เช็คว่า Container สถานะ Up อยู่ไหม
-                    sh "docker-compose ps | grep Up"
+                    // Cleanup และ Run ใหม่
+                    sh "docker stop ${CONTAINER_NAME} || true"
+                    sh "docker rm ${CONTAINER_NAME} || true"
+                    sh "docker run -d --name ${CONTAINER_NAME} -p ${PORT_MAPPING} ${IMAGE_NAME}:latest"
                 }
             }
         }
     }
 }
+
+    post {
+        always {
+            echo 'Pipeline finished.'
+        }
+    }
+}   
