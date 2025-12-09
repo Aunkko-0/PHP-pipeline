@@ -1,63 +1,72 @@
 pipeline {
     agent any
 
-    // กำหนดตัวแปร Environment (ถ้ามี)
     environment {
-        IMAGE_NAME = "my-php-app"
+        // --- 1. การตั้งค่าการเชื่อมต่อ (แก้ไขตรงนี้) ---
+        REMOTE_USER    = 'tanapol'              // User ของเครื่อง Server (เช่น root, ubuntu)
+        REMOTE_HOST    = '192.168.1.156'        // IP ของเครื่อง Server (ดูวิธีหา IP ด้านล่าง)
+        SSH_CREDS_ID   = 'server-ssh-key'    // ID ของ SSH Key ที่คุณตั้งใน Jenkins Credentials
+        
+        // --- 2. การตั้งค่าโปรเจค ---
+        PROJECT_DIR    = 'index.php' // โฟลเดอร์ที่จะวางงานบนเครื่อง Server
+        GIT_REPO_URL   = 'https://github.com/Aunkko-0/PHP-pipeline.git' // ลิงก์ Git
+        BRANCH_NAME    = 'main'                // Branch ที่ต้องการ Deploy
     }
 
     stages {
-        // -----------------------------
-        // Stage 1: เตรียม Code
-        // -----------------------------
-        stage('Checkout Code') {
+        stage('Deploy to Server') {
             steps {
-                echo 'Step 1: Pulling code from Git...'
-                checkout scm
-            }
-        }
+                // ใช้ plugin ssh-agent เพื่อโหลด Private Key มาใช้ชั่วคราว
+                sshagent(credentials: [SSH_CREDS_ID]) {
+                    script {
+                        echo "🚀 Connecting to ${REMOTE_HOST}..."
+                        
+                        // เริ่มส่งคำสั่ง SSH ไปทำงานที่เครื่องปลายทาง
+                        // -o StrictHostKeyChecking=no เพื่อข้ามการถามยืนยัน fingerprint
+                        sh """
+                            ssh -o StrictHostKeyChecking=no ${REMOTE_USER}@${REMOTE_HOST} '
+                                
+                                # หยุดเมื่อเจอ Error
+                                set -e
+                                
+                                echo "📂 Preparing directory..."
+                                mkdir -p ${PROJECT_DIR}
+                                cd ${PROJECT_DIR}
 
-        // -----------------------------
-        // Stage 2: สร้าง Image (Build)
-        // -----------------------------
-        stage('Build Image') {
-            steps {
-                script {
-                    echo 'Step 2: Building Docker Image...'
-                    // สั่ง Build อย่างเดียว ยังไม่รัน
-                    // --no-cache เพื่อให้มั่นใจว่าโค้ดใหม่ถูกใส่เข้าไปจริงๆ
-                    sh "docker-compose build --no-cache"
-                }
-            }
-        }
+                                # --- Step 1: ดึงโค้ด (Git Clone/Pull) ---
+                                if [ -d ".git" ]; then
+                                    echo "🔄 Updating code..."
+                                    git fetch origin
+                                    git reset --hard origin/${BRANCH_NAME}
+                                else
+                                    echo "⬇️ Cloning repository..."
+                                    git clone -b ${BRANCH_NAME} ${GIT_REPO_URL} .
+                                fi
 
-        // -----------------------------
-        // Stage 3: นำขึ้นใช้งาน (Deploy)
-        // -----------------------------
-        stage('Deploy Container') {
-            steps {
-                script {
-                    echo 'Step 3: Deploying Container...'
-                    
-                    // 1. เคลียร์ Container เก่าออกก่อน (เพื่อความสะอาด)
-                    sh "docker-compose down || true"
-                    
-                    // 2. รัน Container ขึ้นมา (โดยใช้ Image ที่ Build ไว้แล้วจาก Stage ก่อนหน้า)
-                    sh "docker-compose up -d"
-                }
-            }
-        }
-        
-        // -----------------------------
-        // Stage 4: ตรวจสอบผลลัพธ์ (Smoke Test)
-        // -----------------------------
-        stage('Health Check') {
-            steps {
-                script {
-                    echo 'Step 4: Checking if service is alive...'
-                    sleep 5
-                    // เช็คว่า Container สถานะ Up อยู่ไหม
-                    sh "docker-compose ps | grep Up"
+                                # --- Step 2: จัดการ Config (สำหรับ Laravel) ---
+                                # ถ้าไม่มี .env ให้ copy จาก .env.example
+                                if [ ! -f .env ]; then
+                                    cp .env.example .env
+                                    # (Optional) แก้ค่า DB_HOST อัตโนมัติ ถ้าจำเป็น
+                                    # sed -i "s/DB_HOST=127.0.0.1/DB_HOST=db/g" .env
+                                fi
+
+                                # --- Step 3: รัน Docker Compose ---
+                                echo "🐳 Restarting Containers..."
+                                
+                                # ตรวจสอบว่ามี docker-compose V1 หรือ V2
+                                if command -v docker-compose &> /dev/null; then
+                                    docker-compose down || true
+                                    docker-compose up -d --build
+                                else
+                                    docker compose down || true
+                                    docker compose up -d --build
+                                fi
+                                
+                                echo "✅ Deployment Success!"
+                            '
+                        """
+                    }
                 }
             }
         }
